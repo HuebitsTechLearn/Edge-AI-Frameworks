@@ -1,0 +1,86 @@
+🧠 1. Convert TensorFlow Model to TensorFlow Lite (With Quantization)
+python
+Copy
+Edit
+# convert_tflite.py
+import tensorflow as tf
+
+# Load pretrained model (e.g., MobileNetV2)
+model = tf.keras.applications.MobileNetV2(weights="imagenet", input_shape=(224, 224, 3))
+
+# Convert to TFLite with INT8 quantization
+converter = tf.lite.TFLiteConverter.from_keras_model(model)
+converter.optimizations = [tf.lite.Optimize.DEFAULT]
+
+# Provide a representative dataset for post-training quantization
+def representative_dataset():
+    for _ in range(100):
+        data = tf.random.normal([1, 224, 224, 3])
+        yield [data]
+
+converter.representative_dataset = representative_dataset
+converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+converter.inference_input_type = tf.uint8
+converter.inference_output_type = tf.uint8
+
+tflite_model = converter.convert()
+
+with open("mobilenet_v2_quant.tflite", "wb") as f:
+    f.write(tflite_model)
+
+print("✅ Model converted to quantized TFLite format.")
+🔍 2. Run Inference with Python on TFLite Model
+python
+Copy
+Edit
+# infer_tflite.py
+import numpy as np
+import tensorflow as tf
+from PIL import Image
+
+# Load the TFLite model
+interpreter = tf.lite.Interpreter(model_path="mobilenet_v2_quant.tflite")
+interpreter.allocate_tensors()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# Load & preprocess image
+image = Image.open("test.jpg").resize((224, 224))
+input_data = np.expand_dims(np.array(image, dtype=np.uint8), axis=0)
+
+interpreter.set_tensor(input_details[0]['index'], input_data)
+interpreter.invoke()
+
+output = interpreter.get_tensor(output_details[0]['index'])
+predicted_class = np.argmax(output)
+
+print("🔍 Predicted class index:", predicted_class)
+🐳 (Optional) Dockerfile for Edge Deployment
+dockerfile
+Copy
+Edit
+FROM python:3.9-slim
+WORKDIR /app
+COPY . .
+
+RUN pip install tensorflow==2.12.0 pillow numpy
+
+CMD ["python", "infer_tflite.py"]
+bash
+Copy
+Edit
+# Build & Run
+docker build -t tflite-infer .
+docker run --rm -v $(pwd):/app tflite-infer
+📦 Output Structure
+Copy
+Edit
+📁 Project
+ ├── convert_tflite.py
+ ├── infer_tflite.py
+ ├── mobilenet_v2_quant.tflite
+ ├── test.jpg
+ └── Dockerfile
+
+
