@@ -1,0 +1,118 @@
+🧠 1. Install ONNX & ONNX Runtime
+bash
+Copy
+Edit
+pip install onnx onnxruntime onnxruntime-tools pillow numpy
+🖼️ 2. Inference Script (Python + ONNX)
+python
+Copy
+Edit
+# infer_onnx.py
+import onnxruntime as ort
+import numpy as np
+from PIL import Image
+
+# Load image
+img = Image.open("test.jpg").resize((224, 224)).convert("RGB")
+img_data = np.array(img).astype(np.float32) / 255.0
+img_data = np.transpose(img_data, (2, 0, 1))  # HWC → CHW
+img_data = np.expand_dims(img_data, axis=0)   # Add batch dim
+
+# Load model and run inference
+session = ort.InferenceSession("resnet50.onnx", providers=['CPUExecutionProvider'])
+input_name = session.get_inputs()[0].name
+outputs = session.run(None, {input_name: img_data})
+
+pred_class = np.argmax(outputs[0])
+print(f"🔍 Predicted class index: {pred_class}")
+🔧 3. Optional: Quantize the ONNX Model (Post-Training Static Quantization)
+bash
+Copy
+Edit
+# Install the quantization tool
+pip install onnxruntime-tools
+
+# Quantize with onnxruntime_tools
+python -m onnxruntime.quantization.quantize_static \
+  --model_input resnet50.onnx \
+  --model_output resnet50_int8.onnx \
+  --per_channel \
+  --activation_type uint8 \
+  --weight_type uint8 \
+  --data_reader my_data_reader.MyCalibrationDataReader
+⚠️ You’ll need a calibration data reader class for this — I can generate one if needed.
+
+🐳 4. Dockerfile for Lightweight ONNX Inference
+dockerfile
+Copy
+Edit
+# Dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+
+COPY . .
+
+RUN pip install onnx onnxruntime pillow numpy
+
+CMD ["python", "infer_onnx.py"]
+bash
+Copy
+Edit
+docker build -t onnx-infer .
+docker run --rm onnx-infer
+📁 Final Structure
+Copy
+Edit
+📂 onnx_project
+ ├── resnet50.onnx
+ ├── resnet50_int8.onnx
+ ├── infer_onnx.py
+ ├── test.jpg
+ └── Dockerfile
+
+
+
+
+# 📹 ONNX Runtime Live Inference (Webcam)
+# Inference from camera feed using ONNX model (e.g., ResNet50)
+
+import cv2
+import numpy as np
+import onnxruntime as ort
+
+# Load ONNX model
+session = ort.InferenceSession("resnet50.onnx", providers=["CPUExecutionProvider"])
+input_name = session.get_inputs()[0].name
+
+# Preprocessing function
+def preprocess(frame):
+    img = cv2.resize(frame, (224, 224))
+    img = img.astype(np.float32) / 255.0
+    img = np.transpose(img, (2, 0, 1))
+    img = np.expand_dims(img, axis=0)
+    return img
+
+# Initialize webcam
+cap = cv2.VideoCapture(0)
+
+print("📸 Starting live ONNX inference... Press 'q' to quit.")
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    input_tensor = preprocess(frame)
+    outputs = session.run(None, {input_name: input_tensor})
+    pred_class = int(np.argmax(outputs[0]))
+
+    # Overlay prediction on frame
+    cv2.putText(frame, f"Class ID: {pred_class}", (30, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    cv2.imshow('ONNX Live Inference', frame)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
