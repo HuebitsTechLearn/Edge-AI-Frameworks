@@ -1,0 +1,106 @@
+Below is a worked-through “hello-edge” workflow that mirrors how you’d use LatentAI LEIP™ once you have a paid licence and have installed the SDK ( leip CLI + Python APIs).
+
+⚠️ Note LatentAI keeps the binaries private, so the calls below assume the CLI is already on your $PATH and the Python wheel is installed (pip install leip-sdk).
+Swap the paths / model names to your own.
+
+1️⃣ Convert a PyTorch model to ONNX
+python
+Copy
+Edit
+# convert_to_onnx.py
+import torch
+from torchvision.models import mobilenet_v2
+
+model = mobilenet_v2(pretrained=True).eval()
+dummy = torch.randn(1, 3, 224, 224)
+
+torch.onnx.export(
+    model, dummy, "mobilenet_v2.onnx",
+    input_names=["input0"], output_names=["output0"],
+    opset_version=13, do_constant_folding=True
+)
+print("✓ ONNX model saved.")
+bash
+Copy
+Edit
+python convert_to_onnx.py
+2️⃣ Profile the model on your target (ARM Cortex-A53 here)
+bash
+Copy
+Edit
+leip profile \
+  --model mobilenet_v2.onnx \
+  --target arm-cortex-a53 \
+  --output prof_report.json
+Generates latency, memory, & MAC counts for the exact device.
+
+3️⃣ Optimize & Quantize with LEIP
+bash
+Copy
+Edit
+leip optimize \
+  --model mobilenet_v2.onnx \
+  --target arm-cortex-a53 \
+  --quantize int8 \
+  --compression pruner=0.3 \
+  --output mobilenet_v2_leip.opt.onnx
+leip optimize applies graph-level pruning, INT8 quantization, and any target-specific kernels.
+
+4️⃣ Package for Edge Deployment
+bash
+Copy
+Edit
+leip package \
+  --model mobilenet_v2_leip.opt.onnx \
+  --target arm-cortex-a53 \
+  --runtime leip-runtime \
+  --output edge_bundle/
+The edge_bundle/ now holds:
+
+python
+Copy
+Edit
+edge_bundle/
+ ├── leip_manifest.json
+ ├── mobilenet_v2_int8.bin   # weights
+ └── mobilenet_v2_int8.rt    # runtime graph
+5️⃣ Python Inference on the Device
+python
+Copy
+Edit
+# edge_infer.py
+from leip_runtime import Runtime
+import numpy as np
+from PIL import Image
+
+rt = Runtime("edge_bundle/leip_manifest.json")   # auto-loads everything
+
+img = Image.open("test.jpg").resize((224, 224))
+arr = np.array(img).astype("float32").transpose(2, 0, 1) / 255.0
+arr = np.expand_dims(arr, 0)                     # NCHW
+
+result = rt.run({"input0": arr})
+print("Top-1 class index:", int(result["output0"].argmax()))
+6️⃣ Dockerising (optional Jetson / Raspberry Pi)
+dockerfile
+Copy
+Edit
+# Dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+COPY edge_bundle/ edge_bundle/
+COPY edge_infer.py .
+
+# Install LatentAI runtime wheel (download from portal)
+COPY leip_runtime-*.whl .
+RUN pip install leip_runtime-*.whl pillow numpy
+
+CMD ["python", "edge_infer.py"]
+bash
+Copy
+Edit
+docker build -t leip-edge .
+docker run --rm leip-edge
+
+
+
