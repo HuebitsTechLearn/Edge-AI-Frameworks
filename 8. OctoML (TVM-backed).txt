@@ -1,0 +1,120 @@
+🧠 Step-by-Step: OctoML (via TVM + CLI + API)
+1️⃣ TVM Conversion (Python)
+📁 convert_model_with_tvm.py
+
+python
+Copy
+Edit
+import torch
+import tvm
+from tvm import relay
+from torchvision import models
+
+# Load pretrained model
+model = models.resnet18(pretrained=True)
+model.eval()
+
+# Dummy input
+input_shape = [1, 3, 224, 224]
+dummy_input = torch.randn(*input_shape)
+
+# Convert to Relay (TVM's IR)
+scripted_model = torch.jit.trace(model, dummy_input)
+input_name = "input0"
+shape_list = [(input_name, input_shape)]
+
+mod, params = relay.frontend.from_pytorch(scripted_model, shape_list)
+
+# Compile for ARM (or your target)
+target = tvm.target.Target("llvm")  # or "llvm -mtriple=armv7l-linux-gnueabihf"
+with tvm.transform.PassContext(opt_level=3):
+    lib = relay.build(mod, target=target, params=params)
+
+# Export compiled library
+lib.export_library("resnet18_tvm_deploy.so")
+2️⃣ OctoML Web or CLI Upload
+You upload the .so file OR model checkpoint to your OctoML project dashboard.
+
+For CLI users:
+
+bash
+Copy
+Edit
+octoml login
+octoml optimize --model resnet18.onnx --target jetson-nano
+(They handle quantization, graph optimizations, etc. under the hood)
+
+3️⃣ Deploy via API (Optional Automation)
+bash
+Copy
+Edit
+# Example: Initiate deploy via API
+curl -X POST https://api.octoml.ai/v1/deploy \
+  -H "Authorization: Bearer <YOUR_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "model_id": "xyz123",
+        "target": "jetson-nano",
+        "project": "EdgeCam"
+      }'
+
+
+
+
+# 🚀 Full OctoML Edge Inferencing Loop (Jetson + Python + Docker)
+
+# 📁 1. infer.py - Edge Inference Script using TVM + OctoML optimized model
+import tvm
+from tvm.contrib import graph_executor
+import numpy as np
+import cv2
+
+# Load model artifacts
+loaded_lib = tvm.runtime.load_module("resnet18_tvm_deploy.so")
+dev = tvm.device("cuda", 0)  # For Jetson GPU use; fallback to "cpu" if needed
+
+# Load JSON + params
+with open("resnet18_tvm_graph.json") as f:
+    graph = f.read()
+with open("resnet18_tvm_params.bin", "rb") as f:
+    params = bytearray(f.read())
+
+# Create runtime executor
+module = graph_executor.create(graph, loaded_lib, dev)
+module.load_params(params)
+
+# Load and preprocess image
+image = cv2.imread("input.jpg")
+resized = cv2.resize(image, (224, 224)).astype("float32")
+input_data = np.expand_dims(resized.transpose(2, 0, 1), axis=0)
+input_data = input_data / 255.0  # Normalize if needed
+
+# Set input and run
+module.set_input("input0", input_data)
+module.run()
+
+# Get output
+output = module.get_output(0).asnumpy()
+pred_class = np.argmax(output)
+print(f"Predicted Class ID: {pred_class}")
+
+# 🐳 2. Dockerfile - Edge Runtime Container for Jetson Nano
+FROM nvcr.io/nvidia/l4t-base:r32.6.1
+
+WORKDIR /app
+COPY . /app
+
+RUN apt-get update && \
+    apt-get install -y python3-pip libopencv-dev python3-opencv && \
+    pip3 install numpy tvm opencv-python
+
+CMD ["python3", "infer.py"]
+
+# 📦 3. Build & Run
+# docker build -t edge-infer .
+# docker run --runtime nvidia --rm edge-infer
+
+# 📌 Notes:
+# - Make sure resnet18_tvm_deploy.so, .json, and .bin are copied to /app
+# - Your TVM build must target Jetson (ARM + CUDA enabled)
+# - Preprocessing should match training input format (mean/std etc.)
