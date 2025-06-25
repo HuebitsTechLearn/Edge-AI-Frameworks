@@ -1,0 +1,120 @@
+Lambda function example used in an AWS Greengrass + MQTT Edge AI setup:
+
+🧠 lambda_function.py – MQTT Message Handler for Greengrass
+python
+Copy
+Edit
+import json
+
+def lambda_handler(event, context):
+    # Example payload from IoT Core
+    print("Received event: " + json.dumps(event, indent=2))
+
+    # Business logic: echoing the message or processing it
+    message = event.get('message', 'No message found')
+
+    # Return response
+    return {
+        'statusCode': 200,
+        'body': json.dumps({'received_message': message})
+    }
+
+
+
+ How This Fits in Edge AI Deployment:
+Greengrass Core runs on the edge device (e.g., Jetson Nano, Raspberry Pi).
+
+This Lambda is deployed to Greengrass and triggered via MQTT topic (e.g., iot/edge/data).
+
+You can wrap this in a Docker container for isolated runtime or include model inference inside.
+
+🔧 Add-Ons You Might Want:
+SageMaker Neo optimization script for the model
+
+Dockerfile to run this with ONNX/TensorFlow Lite inference
+
+Greengrass subscription JSON (for MQTT topics)
+
+
+
+# 📦 Full AWS Greengrass + Lambda + Docker + SageMaker Neo Deployment Pipeline
+
+# 1️⃣ Lambda Function (Python)
+# File: lambda_function.py
+import json
+
+def lambda_handler(event, context):
+    print("Received event: " + json.dumps(event, indent=2))
+    message = event.get('message', 'No message found')
+    return {
+        'statusCode': 200,
+        'body': json.dumps({'received_message': message})
+    }
+
+# 2️⃣ Dockerfile to Package Lambda with Runtime Support
+# File: Dockerfile
+FROM public.ecr.aws/lambda/python:3.9
+
+# Copy function code
+COPY lambda_function.py .
+
+# Install dependencies (e.g., NumPy, ONNX, etc.)
+RUN pip install --no-cache-dir numpy onnxruntime
+
+# Set the CMD to your handler
+CMD ["lambda_function.lambda_handler"]
+
+# 3️⃣ SageMaker Neo Compilation Script (for optimized model)
+# File: compile_model.py
+import boto3
+
+client = boto3.client('sagemaker')
+
+response = client.create_compilation_job(
+    CompilationJobName='EdgeModelOptimized',
+    RoleArn='arn:aws:iam::YOUR_ACCOUNT_ID:role/SageMakerExecutionRole',
+    InputConfig={
+        'S3Uri': 's3://your-bucket/model.tar.gz',
+        'DataInputConfig': '{"data":[1,3,224,224]}',
+        'Framework': 'TENSORFLOW',
+        'FrameworkVersion': '2.6.1'
+    },
+    OutputConfig={
+        'S3OutputLocation': 's3://your-bucket/compiled/',
+        'TargetDevice': 'jetson_nano'
+    },
+    StoppingCondition={'MaxRuntimeInSeconds': 900}
+)
+
+print("Started compilation job:", response['CompilationJobArn'])
+
+# 4️⃣ Greengrass Subscription Configuration (JSON)
+# File: subscriptions.json
+[
+  {
+    "Id": "1",
+    "Source": "cloud",
+    "Subject": "iot/edge/data",
+    "Target": "LambdaFunction"
+  },
+  {
+    "Id": "2",
+    "Source": "LambdaFunction",
+    "Subject": "iot/edge/data/response",
+    "Target": "cloud"
+  }
+]
+
+# 5️⃣ Deployment Manifest (Greengrass v2-style)
+# File: greengrass_deployment.json
+{
+  "components": {
+    "com.example.edgeai": {
+      "version": "1.0.0",
+      "configurationUpdate": {},
+      "runWith": {
+        "posixUser": "ggc_user"
+      }
+    }
+  }
+}
